@@ -5,8 +5,8 @@ from dotenv import load_dotenv
 import os
 
 from database import engine, get_db, Base
-from models import Ticket, User
-from schemas import TicketCreate, TicketResponse, UserCreate, UserLogin,TicketUpdate,TicketStatus
+from models import Ticket, User,Comment
+from schemas import TicketCreate, TicketResponse, UserCreate, UserLogin,TicketUpdate,TicketStatus,CommentCreate,CommentResponse
 
 from passlib.context import CryptContext
 
@@ -27,7 +27,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
-def create_access_token(data: dict):
+def create_access_token(data: dict):  # sourcery skip: dict-assign-update-to-union, inline-immediately-returned-variable, simplify-dictionary-update
     to_encode = data.copy()
 
     expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -72,6 +72,20 @@ def require_role(required_role: str):
 
     return role_checker
 
+def check_ticket_access(ticket: Ticket, current_user: User):
+    # sourcery skip: merge-duplicate-blocks
+
+    if current_user.role == "admin":
+        return
+
+    if current_user.role == "agent":
+        if ticket.assigned_to != current_user.id:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+    elif current_user.role == "customer":
+        if ticket.user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Access denied")
+
 @app.post("/tickets",response_model=TicketResponse)
 def create_ticket(
     ticket : TicketCreate,
@@ -113,9 +127,16 @@ def get_ticket(
     ticket_id : int,
     db : Session = Depends(get_db),
     curent_user : User = Depends(get_current_user)):
-    ticket = db.query(Ticket).filter(Ticket.id == ticket_id,Ticket.user_id == curent_user.id).first()
+
+    ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
+
     if ticket is None:
         raise HTTPException(status_code=404,detail="No ticket found")
+    if curent_user.role == "customer" and ticket.user_id != curent_user.id:
+        raise HTTPException(status_code=404,detail="Access Denied")
+    if curent_user.role == "agent" and ticket.user_id != curent_user.id:
+        raise HTTPException(status_code=404,detail="Access Denied")
+    
 
     return ticket
 
@@ -127,10 +148,10 @@ def update_ticket(
                 current_user : User = Depends(get_current_user)
                 ):
     
-    ticket = db.query(Ticket).filter(Ticket.id == ticket_id,Ticket.user_id==current_user.id).first()
+    ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
     if ticket is None:
         raise HTTPException(status_code=404,detail="Ticket Not Found")
-
+    check_ticket_access(ticket, current_user)
     update_data = ticket_data.model_dump(exclude_unset=True)
 
     for key, value in update_data.items():
@@ -150,11 +171,11 @@ def delete_ticket(
     current_user : User = Depends(get_current_user)
     ):
     
-    ticket = db.query(Ticket).filter(Ticket.id == ticket_id,Ticket.user_id==current_user.id).first()
+    ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
 
     if ticket is None:
         raise HTTPException(status_code=404,detail="Ticket Not Found")
-    
+    check_ticket_access(ticket, current_user)
     db.delete(ticket)
     db.commit()
 
@@ -162,6 +183,7 @@ def delete_ticket(
 
 @app.post("/register")
 def register_user(user_data : UserCreate,db: Session = Depends(get_db)):
+    # sourcery skip: use-named-expression
     existing_user = db.query(User).filter(User.username == user_data.username).first()
 
     if existing_user:
@@ -175,7 +197,11 @@ def register_user(user_data : UserCreate,db: Session = Depends(get_db)):
     db.commit()
     db.refresh(new_user)
 
-    return {"message":"User Registered Successfully"}
+    return {
+    "message": "User Registered Successfully",
+    "username": new_user.username,
+    "role": new_user.role
+    }
 
 
 @app.post("/login")
@@ -217,3 +243,64 @@ def assign_ticket(ticket_id : int,agent_id : int,db :Session = Depends(get_db),c
     db.refresh(ticket)
 
     return {"message":"Ticket assigned successfully"}
+
+@app.post(
+    "/tickets/{ticket_id}/comments",
+    response_model=CommentResponse
+)
+def create_comment(
+    ticket_id: int,
+    comment_data: CommentCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    ticket = db.query(Ticket).filter(
+        Ticket.id == ticket_id
+    ).first()
+
+    if ticket is None:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+
+    check_ticket_access(ticket, current_user)
+
+    new_comment = Comment(
+        content=comment_data.content,
+        ticket_id=ticket_id,
+        user_id=current_user.id
+    )
+
+    db.add(new_comment)
+    db.commit()
+    db.refresh(new_comment)
+
+    return new_comment
+
+@app.get(
+    "/tickets/{ticket_id}/comments",
+    response_model=list[CommentResponse]
+)
+def get_comments(
+    ticket_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):  # sourcery skip: inline-immediately-returned-variable
+    ticket = db.query(Ticket).filter(
+        Ticket.id == ticket_id
+    ).first()
+
+    if ticket is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Ticket not found"
+        )
+
+    check_ticket_access(ticket, current_user)
+
+    comments = (
+        db.query(Comment)
+        .filter(Comment.ticket_id == ticket_id)
+        .order_by(Comment.created_at.asc())
+        .all()
+    )
+
+    return comments

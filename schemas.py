@@ -35,4 +35,16 @@ class UserCreate(BaseModel):
 class UserLogin(BaseModel):
     username : str
     password : str
-    
+
+class CommentCreate(BaseModel):
+    content: str
+
+
+class CommentResponse(BaseModel):
+    id: int
+    content: str
+    ticket_id: int
+    user_id: int
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
