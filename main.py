@@ -15,7 +15,7 @@ from jose import jwt , JWTError
 
 
 Base.metadata.create_all(bind=engine)
-
+# app
 app = FastAPI(title="Customer Support Ticket API")
 
 load_dotenv()
