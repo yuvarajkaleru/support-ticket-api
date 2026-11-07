@@ -1,3 +1,5 @@
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
 from fastapi.security import OAuth2PasswordBearer,OAuth2PasswordRequestForm
@@ -359,3 +361,11 @@ def read_current_user(
         "username": current_user.username,
         "role": current_user.role
     }
+
+BASE_DIR = Path(__file__).resolve().parent
+
+app.mount(
+    "/",
+    StaticFiles(directory=BASE_DIR / "frontend", html=True),
+    name="frontend"
+)
