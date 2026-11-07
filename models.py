@@ -11,7 +11,7 @@ class Ticket(Base):
     priority: Mapped[str] = mapped_column(String(10), default="medium")
     status: Mapped[str] = mapped_column(String(20), default="open")
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"),nullable=True)
-    owner: Mapped["User"] = relationship(back_populates="tickets")
+    owner: Mapped["User"] = relationship(back_populates="tickets",foreign_keys=[user_id])
 
     created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
 
@@ -24,7 +24,7 @@ class User(Base):
     id : Mapped[int] = mapped_column(primary_key=True,index=True)
     username : Mapped[str] = mapped_column(String(50),unique=True,index=True)
     hashed_password : Mapped[str] = mapped_column(String(255))
-    tickets: Mapped[list["Ticket"]] = relationship(back_populates="owner")
+    tickets: Mapped[list["Ticket"]] = relationship(back_populates="owner",foreign_keys="Ticket.user_id")
     role: Mapped[str] = mapped_column(default="customer",nullable=False)
 
 

@@ -13,10 +13,21 @@ from passlib.context import CryptContext
 from datetime import datetime, timedelta, timezone
 from jose import jwt , JWTError
 
+from fastapi.middleware.cors import CORSMiddleware
 
+app = FastAPI(title="Customer Support Ticket API")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://127.0.0.1:5500",
+        "http://localhost:5500"
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"]
+)
 Base.metadata.create_all(bind=engine)
 # app
-app = FastAPI(title="Customer Support Ticket API")
 
 load_dotenv()
 
@@ -49,7 +60,7 @@ def get_current_user(token : str = Depends(oauth2_scheme), db : Session = Depend
         if username is None:
             raise credentials_exception
 
-    except:
+    except JWTError:
         raise credentials_exception
 
     user = db.query(User).filter(User.username == username).first()
@@ -107,36 +118,70 @@ def create_ticket(
     return new_ticket
 
 
+
 @app.get("/tickets", response_model=list[TicketResponse])
 def get_tickets(
-    db : Session = Depends(get_db),
-    current_user : User = Depends(get_current_user)
-    ):
+    search: str | None = None,
+    status: TicketStatus | None = None,
+    priority: str | None = None,
+    skip: int = 0,
+    limit: int = 10,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    query = db.query(Ticket)
 
     if current_user.role == "admin":
-        tickets = db.query(Ticket).all()
+        pass
+
     elif current_user.role == "agent":
-        db.query(Ticket).filter(Ticket.assigned_to == current_user.id).all()
+        query = query.filter(
+            Ticket.assigned_to == current_user.id
+        )
+
     else:
-        tickets = db.query(Ticket).filter(Ticket.user_id == current_user.id).all()
-    return tickets
+        query = query.filter(
+            Ticket.user_id == current_user.id
+        )
+
+    if search:
+        query = query.filter(
+            Ticket.title.ilike(f"%{search}%")
+        )
+
+    if status:
+        query = query.filter(
+            Ticket.status == status.value
+        )
+
+    if priority:
+        query = query.filter(
+            Ticket.priority == priority
+        )
+
+    query = query.order_by(Ticket.created_at.desc())
+
+    return query.offset(skip).limit(limit).all()
 
 
-@app.get("/tickets/{ticket_id}",response_model=TicketResponse)
+
+@app.get("/tickets/{ticket_id}", response_model=TicketResponse)
 def get_ticket(
-    ticket_id : int,
-    db : Session = Depends(get_db),
-    curent_user : User = Depends(get_current_user)):
-
-    ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
+    ticket_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    ticket = db.query(Ticket).filter(
+        Ticket.id == ticket_id
+    ).first()
 
     if ticket is None:
-        raise HTTPException(status_code=404,detail="No ticket found")
-    if curent_user.role == "customer" and ticket.user_id != curent_user.id:
-        raise HTTPException(status_code=404,detail="Access Denied")
-    if curent_user.role == "agent" and ticket.user_id != curent_user.id:
-        raise HTTPException(status_code=404,detail="Access Denied")
-    
+        raise HTTPException(
+            status_code=404,
+            detail="Ticket not found"
+        )
+
+    check_ticket_access(ticket, current_user)
 
     return ticket
 
@@ -304,3 +349,13 @@ def get_comments(
     )
 
     return comments
+
+@app.get("/users/me")
+def read_current_user(
+    current_user: User = Depends(get_current_user)
+):
+    return {
+        "id": current_user.id,
+        "username": current_user.username,
+        "role": current_user.role
+    }
